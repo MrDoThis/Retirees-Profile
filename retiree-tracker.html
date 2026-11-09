@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Retiree Profiles</title>
+<style>
+:root{--bg:#f5f4f0;--card:#fff;--ink:#1d2433;--mut:#6b7280;--acc:#1f4e79;--ok:#2e7d32;--warn:#c62828;--line:#e2e0d9}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);padding-bottom:78px}
+header{background:var(--acc);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5}
+header h1{margin:0;font-size:18px}
+header small{font-weight:400;font-size:12px;opacity:.8;margin-left:8px}
+.stats{display:flex;gap:8px;overflow-x:auto;padding:12px 12px 4px}
+.stat{flex:0 0 auto;background:var(--card);border:2px solid transparent;border-radius:10px;padding:8px 12px;min-width:92px;text-align:center;cursor:pointer}
+.stat.on{border-color:var(--acc)}
+.stat b{display:block;font-size:22px}
+.stat span{font-size:11px;color:var(--mut)}
+.bar{margin:8px 12px;height:8px;background:#ddd;border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ok);width:0}
+.tools{display:flex;gap:8px;padding:4px 12px}
+input,textarea,select{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+textarea{min-height:140px}
+label{display:block;font-size:13px;color:var(--mut);margin:10px 0 3px}
+.list{padding:8px 12px;display:grid;gap:8px}
+.item{display:flex;gap:10px;background:var(--card);border-radius:10px;padding:10px;align-items:center;cursor:pointer;border:1px solid var(--line)}
+.ph{width:56px;height:56px;border-radius:8px;background:#e8e6df;flex:0 0 56px;object-fit:cover;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:11px}
+.item .t{flex:1;min-width:0}
+.item .n{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .s{font-size:12px;color:var(--mut)}
+.tag{display:inline-block;font-size:11px;padding:2px 7px;border-radius:10px;margin:3px 3px 0 0}
+.y{background:#e3f2e4;color:var(--ok)}.n0{background:#fde8e8;color:var(--warn)}
+nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);display:flex;gap:8px;padding:10px;z-index:6}
+button{font:inherit;border:0;border-radius:8px;padding:12px;cursor:pointer;background:var(--acc);color:#fff;flex:1}
+button.g{background:#e8e6df;color:var(--ink)}button.d{background:var(--warn)}
+button.s{padding:6px 10px;font-size:12px;flex:0 0 auto;margin-left:6px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;z-index:10;overflow:auto}
+.modal.show{display:block}
+.sheet{background:#fff;max-width:560px;margin:0 auto;min-height:100%;padding:16px}
+.row{display:flex;gap:8px}
+.prev{max-width:160px;max-height:200px;border-radius:8px;display:block;margin:8px 0}
+.warn{background:#fff4e5;border:1px solid #f0b86e;border-radius:8px;padding:10px;margin:10px 0;font-size:14px}
+.empty{text-align:center;color:var(--mut);padding:40px 16px}
+.small{font-size:13px;color:var(--mut)}
+</style>
+</head>
+<body>
+<header><h1>Retiree Profiles<small id="dv"></small></h1></header>
+<div class="stats" id="stats"></div>
+<div class="bar"><i id="prog"></i></div>
+<div class="tools"><input id="q" placeholder="Search name or number…"></div>
+<div class="list" id="list"></div>
+
+<nav>
+  <button onclick="openForm()">+ Add</button>
+  <button class="g" onclick="document.getElementById('quick').click()">Quick add photos</button>
+  <button class="g" onclick="openMenu()">Export / Backup</button>
+</nav>
+<input type="file" id="quick" accept="image/*" multiple hidden>
+<input type="file" id="restore" accept=".json" hidden>
+
+<div class="modal" id="m"><div class="sheet" id="sheet"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
+<script>
+/* ---------- storage (IndexedDB, on this device) ---------- */
+let DB,RAW=[],ALL=[],DEV=localStorage.getItem('dev'),CUR=null,filter='all';
+const req=(r)=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const st=(m)=>DB.transaction('q',m).objectStore('q');
+const newId=()=>(crypto.randomUUID?crypto.randomUUID():'id'+Date.now().toString(36)+Math.random().toString(36).slice(2,10));
+
+async function init(){
+  DB=await new Promise((res,rej)=>{const o=indexedDB.open('retirees',2);
+    o.onupgradeneeded=()=>{const d=o.result;
+      if(!d.objectStoreNames.contains('p'))d.createObjectStore('p',{keyPath:'id',autoIncrement:true});
+      if(!d.objectStoreNames.contains('q'))d.createObjectStore('q',{keyPath:'uid'})};
+    o.onsuccess=()=>res(o.result);o.onerror=()=>rej(o.error)});
+  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+  if(!DEV){askLetter();return}
+  await boot();
+}
+function askLetter(){
+  sheet(`<h2>Set up this device</h2>
+  <p>Type <b>one letter</b> that identifies this device. Every profile you create here will be numbered with it, so two devices can never produce the same number.</p>
+  <p class="small">Example: <b>P</b> for your phone, <b>L</b> for your laptop. Use a <b>different</b> letter on each device, and don't change it later.</p>
+  <input id="dl" maxlength="1" style="font-size:24px;text-transform:uppercase;width:80px;text-align:center">
+  <button style="width:100%;margin-top:14px" onclick="setLetter()">Continue</button>`);
+}
+async function setLetter(){
+  const l=document.getElementById('dl').value.trim().toUpperCase();
+  if(!/^[A-Z]$/.test(l)){alert('Please type a single letter A–Z.');return}
+  DEV=l;localStorage.setItem('dev',l);closeM();await boot();
+}
+async function boot(){await migrate();await load()}
+async function migrate(){ /* brings over records from the first version of this tool, if any */
+  if(localStorage.getItem('mig2'))return;
+  RAW=await req(st('readonly').getAll());
+  const old=await req(DB.transaction('p').objectStore('p').getAll());
+  for(const o of old){const r={...o};delete r.id;r.uid=newId();r.num=nextNum();r.created=o.created||Date.now();r.updated=Date.now();
+    await req(st('readwrite').put(r))}
+  localStorage.setItem('mig2','1');
+}
+function nextNum(){
+  let m=+localStorage.getItem('ctr')||0;
+  RAW.forEach(p=>{const x=/^([A-Z])-(\d+)$/.exec(p.num||'');if(x&&x[1]===DEV)m=Math.max(m,+x[2])});
+  m++;localStorage.setItem('ctr',m);
+  return DEV+'-'+String(m).padStart(3,'0');
+}
+async function load(){RAW=await req(st('readonly').getAll());ALL=RAW.filter(p=>!p.deleted);render()}
+async function save(p){p.updated=Date.now();await req(st('readwrite').put(p));await load()}
+const blank=()=>({uid:newId(),num:'',title:'',name:'',surname:'',bio:'',photo:'',sender:'',notes:'',created:Date.now(),updated:Date.now()});
+
+/* ---------- helpers ---------- */
+const TITLES=['chief','dr','engr','engineer','mrs','mr','miss','ms','prof','pastor','elder','hon','alhaji','alhaja','deacon','deaconess','barr','sir','madam','rev','apostle','evang','arc','pst'];
+const toks=(s)=>(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(t=>t&&!TITLES.includes(t));
+const complete=(p)=>!!(p.name&&p.bio&&p.photo);
+const surname=(p)=>(p.surname||(toks(p.name).slice(-1)[0])||'zzz').toLowerCase();
+const esc=(s)=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function similar(name,self){
+  const a=toks(name);if(!a.length)return[];
+  return ALL.filter(p=>p.uid!==self.uid&&p.name&&!(self.notdup||[]).includes(p.uid)&&!(p.notdup||[]).includes(self.uid)).map(p=>{
+    const b=toks(p.name);
+    if(a.join(' ')===b.join(' ')||[...a].sort().join(' ')===[...b].sort().join(' '))return{p,kind:'Same name'};
+    const common=a.filter(t=>b.includes(t)).length;
+    if(common>=2||(common>=1&&Math.min(a.length,b.length)===1))return{p,kind:'Similar name'};
+    return null}).filter(Boolean);
+}
+function resize(file,max=1000){return new Promise((res,rej)=>{
+  const img=new Image(),u=URL.createObjectURL(file);
+  img.onload=()=>{let w=img.width,h=img.height,s=Math.min(1,max/Math.max(w,h));w=Math.round(w*s);h=Math.round(h*s);
+    const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+    URL.revokeObjectURL(u);res({photo:c.toDataURL('image/jpeg',.82),pw:w,ph:h})};
+  img.onerror=()=>rej(new Error('Could not read image'));img.src=u})}
+function download(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+let dupSet=new Set();
+
+/* ---------- list + dashboard ---------- */
+const FILTERS=[
+ ['all','Total',()=>true],
+ ['complete','Complete',complete],
+ ['nophoto','No photo',p=>!p.photo],
+ ['nobio','No bio',p=>!p.bio],
+ ['noname','No name',p=>!p.name],
+ ['dups','Duplicates?',p=>dupSet.has(p.uid)]];
+function render(){
+  if(!DB||!DEV)return;
+  document.getElementById('dv').textContent='Device '+DEV;
+  dupSet=new Set(ALL.filter(p=>p.name&&similar(p.name,p).length).map(p=>p.uid));
+  const done=ALL.filter(complete).length;
+  document.getElementById('stats').innerHTML=FILTERS.map(([k,l,f])=>
+    `<div class="stat ${filter===k?'on':''}" onclick="filter='${k}';render()"><b>${ALL.filter(f).length}</b><span>${l}</span></div>`).join('');
+  document.getElementById('prog').style.width=(ALL.length?done/ALL.length*100:0)+'%';
+  const q=document.getElementById('q').value.toLowerCase().trim();
+  const f=FILTERS.find(x=>x[0]===filter)[2];
+  const rows=ALL.filter(f).filter(p=>!q||((p.name||'')+' '+p.num).toLowerCase().includes(q))
+    .sort((a,b)=>(a.name&&b.name)?surname(a).localeCompare(surname(b)):(a.name?-1:b.name?1:(a.created||0)-(b.created||0)));
+  document.getElementById('list').innerHTML=rows.length?rows.map(p=>`
+   <div class="item" onclick="openForm('${p.uid}')">
+     ${p.photo?`<img class="ph" src="${p.photo}">`:'<div class="ph">no photo</div>'}
+     <div class="t"><div class="n">${esc((p.title?p.title+' ':'')+(p.name||'Unidentified'))}</div>
+     <div class="s">${p.num}${p.sender?' · from '+esc(p.sender):''}</div>
+     <span class="tag ${p.name?'y':'n0'}">name</span><span class="tag ${p.bio?'y':'n0'}">bio</span><span class="tag ${p.photo?'y':'n0'}">photo</span>${dupSet.has(p.uid)?'<span class="tag n0">possible duplicate</span>':''}</div>
+   </div>`).join(''):`<div class="empty">${ALL.length?'Nothing matches.':'No profiles yet. Tap + Add or Quick add photos.'}</div>`;
+}
+document.getElementById('q').oninput=render;
+
+/* ---------- add / edit ---------- */
+function openForm(uid){
+  CUR=uid?{...RAW.find(p=>p.uid===uid)}:blank();
+  const p=CUR;
+  sheet(`
+   <h2>${p.num||'New profile'}</h2>
+   <div class="row"><div style="flex:1"><label>Title</label><input id="f_title" value="${esc(p.title)}" placeholder="Chief, Dr, Engr…"></div>
+   <div style="flex:3"><label>Full name</label><input id="f_name" value="${esc(p.name)}"></div></div>
+   <label>Surname (used for sorting; leave blank to use last word)</label><input id="f_sur" value="${esc(p.surname)}">
+   <div id="dups"></div>
+   <label>Biography</label><textarea id="f_bio">${esc(p.bio)}</textarea>
+   <label>Photo</label>
+   <img id="prev" class="prev" ${p.photo?`src="${p.photo}"`:'style="display:none"'}>
+   <input type="file" id="f_photo" accept="image/*">
+   <label>Sent by</label><input id="f_sender" value="${esc(p.sender)}">
+   <label>Notes</label><input id="f_notes" value="${esc(p.notes)}">
+   <div class="row" style="margin-top:16px"><button class="g" onclick="closeM()">Cancel</button><button onclick="saveForm()">Save</button></div>
+   ${p.num?'<div class="row" style="margin-top:10px"><button class="d" onclick="del()">Delete profile</button></div>':''}`);
+  document.getElementById('f_name').oninput=chkDups;chkDups();
+  document.getElementById('f_photo').onchange=async e=>{const f=e.target.files[0];if(!f)return;
+    try{const r=await resize(f);Object.assign(CUR,r);const i=document.getElementById('prev');i.src=r.photo;i.style.display='block'}catch(x){alert(x.message)}};
+}
+function chkDups(){
+  const m=similar(document.getElementById('f_name').value,CUR);
+  document.getElementById('dups').innerHTML=m.length?`<div class="warn"><b>Possible duplicate:</b>${m.map(x=>`<div style="margin-top:6px">${x.kind}: <a href="#" onclick="event.preventDefault();openForm('${x.p.uid}')">${x.p.num} ${esc(x.p.name)}</a><button class="s g" onclick="notSame('${x.p.uid}')">Not the same person</button></div>`).join('')}</div>`:'';
+}
+async function notSame(o){
+  const other=RAW.find(p=>p.uid===o);if(!other)return;
+  CUR.notdup=[...new Set([...(CUR.notdup||[]),o])];
+  other.notdup=[...new Set([...(other.notdup||[]),CUR.uid])];other.updated=Date.now();
+  await req(st('readwrite').put(other));await load();chkDups();
+}
+async function saveForm(){
+  Object.assign(CUR,{title:val('f_title'),name:val('f_name'),surname:val('f_sur'),bio:val('f_bio'),sender:val('f_sender'),notes:val('f_notes')});
+  const dup=similar(CUR.name,CUR);
+  if(dup.length&&!confirm('This name looks like an existing profile ('+dup.map(d=>d.p.num+' '+d.p.name).join(', ')+').\n\nSave as a separate person anyway?'))return;
+  if(!CUR.num)CUR.num=nextNum();
+  await save(CUR);closeM();
+}
+const val=(i)=>document.getElementById(i).value.trim();
+async function del(){
+  if(!confirm('Delete '+CUR.num+'?\n\nIt moves to "Deleted profiles" (Export / Backup menu) where you can restore it.'))return;
+  CUR.deleted=true;await save(CUR);closeM();
+}
+document.getElementById('quick').onchange=async e=>{
+  const files=[...e.target.files];let n=0;
+  for(const f of files){try{const r=await resize(f);const p=blank();Object.assign(p,r);p.num=nextNum();await req(st('readwrite').put(p));n++}catch(x){}}
+  e.target.value='';await load();alert(n+' unidentified record(s) created. Tap each to add the name.');
+};
+
+/* ---------- modal ---------- */
+function sheet(h){document.getElementById('sheet').innerHTML=h;document.getElementById('m').classList.add('show');document.getElementById('m').scrollTop=0}
+function closeM(){document.getElementById('m').classList.remove('show')}
+
+/* ---------- export / backup / merge ---------- */
+function openMenu(){
+  const nDel=RAW.filter(p=>p.deleted).length;
+  sheet(`<h2>Export / Backup</h2>
+  <div class="warn">Data is stored on this device only. <b>Download a backup regularly.</b></div>
+  <button style="width:100%;margin:6px 0" onclick="backup()">Download backup (.json, includes photos)</button>
+  <button class="g" style="width:100%;margin:6px 0" onclick="document.getElementById('restore').click()">Merge a backup from another device / restore</button>
+  <p class="small">Merging never deletes anything. Records you don't have are added; if both sides have the same record, the most recently edited version wins. To sync two devices: back up on A, merge on B, back up on B, merge on A.</p>
+  <button class="g" style="width:100%;margin:6px 0" onclick="csv()">Download list (.csv)</button>
+  <button class="g" style="width:100%;margin:6px 0" onclick="showTrash()">Deleted profiles (${nDel})</button>
+  <h3>Word document</h3>
+  <label>Title (optional)</label><input id="w_title" placeholder="e.g. Our Retirees">
+  <label>Include</label><select id="w_scope"><option value="complete">Complete profiles only</option><option value="named">All named profiles</option></select>
+  <label><input type="checkbox" id="w_pg" checked style="width:auto"> Page numbers</label>
+  <label><input type="checkbox" id="w_one" checked style="width:auto"> Start each profile on a new page</label>
+  <label><input type="checkbox" id="w_toc" checked style="width:auto"> Contents page</label>
+  <button style="width:100%;margin:10px 0" onclick="wordDoc()">Generate Word document</button>
+  <button class="g" style="width:100%" onclick="closeM()">Close</button>`);
+}
+function showTrash(){
+  const d=RAW.filter(p=>p.deleted);
+  sheet(`<h2>Deleted profiles</h2>${d.length?d.map(p=>`<div class="item" style="cursor:default;margin-bottom:8px"><div class="t"><div class="n">${esc(p.name||'Unidentified')}</div><div class="s">${p.num}</div></div><button class="s" onclick="restoreOne('${p.uid}')">Restore</button></div>`).join(''):'<p>Nothing deleted.</p>'}
+  <button class="g" style="width:100%;margin-top:10px" onclick="openMenu()">Back</button>`);
+}
+async function restoreOne(uid){const p=RAW.find(x=>x.uid===uid);p.deleted=false;await save(p);showTrash()}
+function backup(){download(new Blob([JSON.stringify(RAW)],{type:'application/json'}),'retirees-backup-'+DEV+'-'+new Date().toISOString().slice(0,10)+'.json')}
+document.getElementById('restore').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{
+    const d=JSON.parse(await f.text());if(!Array.isArray(d))throw 0;
+    const have=new Map(RAW.map(p=>[p.uid,p])),nums=new Map(RAW.map(p=>[p.num,p.uid]));
+    let add=0,upd=0,keep=0,clash=0;
+    const tx=DB.transaction('q','readwrite'),s=tx.objectStore('q');
+    for(let r of d){
+      if(!r.uid){r={...r};delete r.id;r.uid=newId();r.num=r.num||nextNum();r.updated=r.updated||Date.now()}
+      const mine=have.get(r.uid);
+      if(!mine){if(nums.has(r.num)&&nums.get(r.num)!==r.uid)clash++;s.put(r);nums.set(r.num,r.uid);add++}
+      else if((r.updated||0)>(mine.updated||0)){s.put(r);upd++}
+      else keep++;
+    }
+    await new Promise((res,rej)=>{tx.oncomplete=res;tx.onerror=()=>rej(tx.error)});
+    await load();closeM();
+    let msg=`Merged.\nNew records added: ${add}\nUpdated with newer version: ${upd}\nYours kept (same or newer): ${keep}`;
+    if(clash)msg+=`\n\nWARNING: ${clash} record(s) share a number with a different person. This usually means the same device letter was used on both devices.`;
+    if(dupSet.size)msg+=`\n\n${dupSet.size} profile(s) look like possible duplicates. Tap "Duplicates?" on the dashboard to review them.`;
+    alert(msg);
+  }catch(x){alert('That is not a valid backup file.')}
+  e.target.value='';
+};
+function csv(){
+  const rows=[['Number','Title','Name','Surname','Has bio','Has photo','Sent by','Notes']].concat(ALL.map(p=>[p.num,p.title,p.name,p.surname,p.bio?'Y':'N',p.photo?'Y':'N',p.sender,p.notes]));
+  download(new Blob(['\ufeff'+rows.map(r=>r.map(c=>'"'+String(c||'').replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}),'retirees.csv');
+}
+async function wordDoc(){
+  if(!window.docx){alert('The Word library did not load. Check your internet connection and reload.');return}
+  const {Document,Packer,Paragraph,TextRun,ImageRun,AlignmentType,Footer,PageNumber,TableOfContents,HeadingLevel}=docx;
+
+  const scope=document.getElementById('w_scope').value;
+  const useToc=document.getElementById('w_toc').checked;
+  const onePer=document.getElementById('w_one').checked;
+  let list=ALL.filter(p=>scope==='complete'?complete(p):p.name);
+  const excluded=ALL.length-list.length;
+  const incomplete=list.filter(p=>!complete(p)).length;
+
+  if(!list.length){alert('No profiles match.');return}
+  if(dupSet.size&&!confirm(dupSet.size+' profile(s) are flagged as possible duplicates. Export anyway?'))return;
+  if(incomplete&&!confirm(incomplete+' included profile(s) lack a bio or photo. Continue?'))return;
+  if(excluded&&!confirm(excluded+' profile(s) will be left out (unnamed or incomplete). Continue?'))return;
+
+  list.sort((a,b)=>surname(a).localeCompare(surname(b))||a.name.localeCompare(b.name));
+
+  const kids=[];
+  const t=document.getElementById('w_title').value.trim()||'Retiree Profiles';
+
+  // Cover page
+  kids.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:3600,after:300},
+    children:[new TextRun({text:t,bold:true,size:56,font:'Georgia',color:'1F4E79'})]}));
+  kids.push(new Paragraph({alignment:AlignmentType.CENTER,
+    children:[new TextRun({text:'Total profiles: '+list.length+'  |  '+new Date().toLocaleDateString(),size:22,font:'Calibri',color:'666666'})]}));
+
+  // Optional contents page (Word fills it in when the file is opened)
+  if(useToc){
+    kids.push(new Paragraph({heading:HeadingLevel.HEADING_2,pageBreakBefore:true,spacing:{after:300},
+      children:[new TextRun({text:'Contents',bold:true,size:32,font:'Georgia',color:'1F4E79'})]}));
+    kids.push(new TableOfContents('Contents',{hyperlink:true,headingStyleRange:'1-1'}));
+  }
+
+  // Profiles
+  list.forEach((p,i)=>{
+    const fullName=(p.title?p.title+' ':'')+p.name;
+    kids.push(new Paragraph({
+      heading:HeadingLevel.HEADING_1,keepNext:true,
+      pageBreakBefore:onePer||i===0,
+      spacing:{before:i===0||onePer?200:360,after:150},
+      children:[new TextRun({text:fullName,bold:true,size:28,font:'Georgia',color:'1F4E79'})]}));
+    if(p.photo){
+      const bin=Uint8Array.from(atob(p.photo.split(',')[1]),c=>c.charCodeAt(0));
+      const s=Math.min(180/p.pw,220/p.ph);
+      kids.push(new Paragraph({keepNext:!!p.bio,spacing:{after:150},
+        children:[new ImageRun({data:bin,transformation:{width:Math.round(p.pw*s),height:Math.round(p.ph*s)}})]}));
+    }
+    (p.bio||'').split(/\n+/).filter(Boolean).forEach(par=>{
+      kids.push(new Paragraph({spacing:{after:140,line:276},
+        children:[new TextRun({text:par,size:22,font:'Calibri',color:'333333'})]}));
+    });
+  });
+
+  const footers=document.getElementById('w_pg').checked?{
+    default:new Footer({children:[new Paragraph({alignment:AlignmentType.RIGHT,children:[
+      new TextRun({text:'Page ',font:'Calibri',size:18,color:'888888'}),
+      new TextRun({children:[PageNumber.CURRENT],font:'Calibri',size:18,color:'888888'})]})]})}:undefined;
+
+  const doc=new Document({
+    features:useToc?{updateFields:true}:undefined,
+    sections:[{properties:{page:{margin:{top:1440,bottom:1440,left:1440,right:1440}}},footers,children:kids}]
+  });
+
+  download(await Packer.toBlob(doc),'retirees-compendium.docx');
+  alert('Done. Included: '+list.length+'. Left out: '+excluded+'.'+(useToc?'\n\nWhen Word opens the file, choose Yes if it asks to update fields. That fills in the contents page.':''));
+}
+
+init();
+</script>
+</body>
+</html>
