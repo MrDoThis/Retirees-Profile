@@ -113,6 +113,8 @@ const blank=()=>({uid:newId(),num:'',title:'',name:'',surname:'',bio:'',photo:''
 /* ---------- helpers ---------- */
 const TITLES=['chief','dr','engr','engineer','mrs','mr','miss','ms','prof','pastor','elder','hon','alhaji','alhaja','deacon','deaconess','barr','sir','madam','rev','apostle','evang','arc','pst'];
 const toks=(s)=>(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(t=>t&&!TITLES.includes(t));
+const photosOf=(p)=>p.photos&&p.photos.length?p.photos:(p.photo?[{photo:p.photo,pw:p.pw,ph:p.ph}]:[]);
+function setPhotos(p,arr){p.photos=arr;const m=arr[0];p.photo=m?m.photo:'';p.pw=m?m.pw:0;p.ph=m?m.ph:0}
 const complete=(p)=>!!(p.name&&p.bio&&p.photo);
 const surname=(p)=>(p.surname||(toks(p.name).slice(-1)[0])||'zzz').toLowerCase();
 const esc=(s)=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -159,7 +161,7 @@ function render(){
      ${p.photo?`<img class="ph" src="${p.photo}">`:'<div class="ph">no photo</div>'}
      <div class="t"><div class="n">${esc((p.title?p.title+' ':'')+(p.name||'Unidentified'))}</div>
      <div class="s">${p.num}${p.sender?' · from '+esc(p.sender):''}</div>
-     <span class="tag ${p.name?'y':'n0'}">name</span><span class="tag ${p.bio?'y':'n0'}">bio</span><span class="tag ${p.photo?'y':'n0'}">photo</span>${dupSet.has(p.uid)?'<span class="tag n0">possible duplicate</span>':''}</div>
+     <span class="tag ${p.name?'y':'n0'}">name</span><span class="tag ${p.bio?'y':'n0'}">bio</span><span class="tag ${p.photo?'y':'n0'}">photo${photosOf(p).length>1?' ×'+photosOf(p).length:''}</span>${dupSet.has(p.uid)?'<span class="tag n0">possible duplicate</span>':''}</div>
    </div>`).join(''):`<div class="empty">${ALL.length?'Nothing matches.':'No profiles yet. Tap + Add or Quick add photos.'}</div>`;
 }
 document.getElementById('q').oninput=render;
@@ -168,6 +170,7 @@ document.getElementById('q').oninput=render;
 function openForm(uid){
   CUR=uid?{...RAW.find(p=>p.uid===uid)}:blank();
   const p=CUR;
+  p.photos=photosOf(p).map(x=>({...x}));
   sheet(`
    <h2>${p.num||'New profile'}</h2>
    <div class="row"><div style="flex:1"><label>Title</label><input id="f_title" value="${esc(p.title)}" placeholder="Chief, Dr, Engr…"></div>
@@ -175,17 +178,30 @@ function openForm(uid){
    <label>Surname (used for sorting; leave blank to use last word)</label><input id="f_sur" value="${esc(p.surname)}">
    <div id="dups"></div>
    <label>Biography</label><textarea id="f_bio">${esc(p.bio)}</textarea>
-   <label>Photo</label>
-   <img id="prev" class="prev" ${p.photo?`src="${p.photo}"`:'style="display:none"'}>
-   <input type="file" id="f_photo" accept="image/*">
+   <label>Photos (the first one is the main photo)</label>
+   <div id="pics" style="display:flex;flex-wrap:wrap;gap:10px"></div>
+   <label>Add photo(s)</label>
+   <input type="file" id="f_photo" accept="image/*" multiple>
    <label>Sent by</label><input id="f_sender" value="${esc(p.sender)}">
    <label>Notes</label><input id="f_notes" value="${esc(p.notes)}">
    <div class="row" style="margin-top:16px"><button class="g" onclick="closeM()">Cancel</button><button onclick="saveForm()">Save</button></div>
    ${p.num?'<div class="row" style="margin-top:10px"><button class="d" onclick="del()">Delete profile</button></div>':''}`);
   document.getElementById('f_name').oninput=chkDups;chkDups();
-  document.getElementById('f_photo').onchange=async e=>{const f=e.target.files[0];if(!f)return;
-    try{const r=await resize(f);Object.assign(CUR,r);const i=document.getElementById('prev');i.src=r.photo;i.style.display='block'}catch(x){alert(x.message)}};
+  document.getElementById('f_photo').onchange=async e=>{
+    for(const f of [...e.target.files]){try{CUR.photos.push(await resize(f))}catch(x){alert(x.message)}}
+    e.target.value='';drawPics()};
+  drawPics();
 }
+function drawPics(){
+  const box=document.getElementById('pics');if(!box)return;
+  box.innerHTML=CUR.photos.length?CUR.photos.map((q,i)=>`<div style="width:110px;text-align:center">
+    <img src="${q.photo}" style="width:110px;height:130px;object-fit:cover;border-radius:8px;${i===0?'outline:3px solid var(--acc)':''}">
+    <div class="small">${i===0?'Main':''}</div>
+    ${i>0?`<button class="s g" style="margin:0 2px 4px 0" onclick="mainPic(${i})">Make main</button>`:''}
+    <button class="s d" style="margin:0" onclick="delPic(${i})">Remove</button></div>`).join(''):'<div class="small">No photo yet.</div>';
+}
+function mainPic(i){const [x]=CUR.photos.splice(i,1);CUR.photos.unshift(x);drawPics()}
+function delPic(i){if(confirm('Remove this photo from the profile?')){CUR.photos.splice(i,1);drawPics()}}
 function chkDups(){
   const m=similar(document.getElementById('f_name').value,CUR);
   document.getElementById('dups').innerHTML=m.length?`<div class="warn"><b>Possible duplicate:</b>${m.map(x=>`<div style="margin-top:6px">${x.kind}: <a href="#" onclick="event.preventDefault();openForm('${x.p.uid}')">${x.p.num} ${esc(x.p.name)}</a><button class="s g" onclick="notSame('${x.p.uid}')">Not the same person</button></div>`).join('')}</div>`:'';
@@ -200,6 +216,7 @@ async function saveForm(){
   Object.assign(CUR,{title:val('f_title'),name:val('f_name'),surname:val('f_sur'),bio:val('f_bio'),sender:val('f_sender'),notes:val('f_notes')});
   const dup=similar(CUR.name,CUR);
   if(dup.length&&!confirm('This name looks like an existing profile ('+dup.map(d=>d.p.num+' '+d.p.name).join(', ')+').\n\nSave as a separate person anyway?'))return;
+  setPhotos(CUR,CUR.photos||[]);
   if(!CUR.num)CUR.num=nextNum();
   await save(CUR);closeM();
 }
@@ -210,7 +227,7 @@ async function del(){
 }
 document.getElementById('quick').onchange=async e=>{
   const files=[...e.target.files];let n=0;
-  for(const f of files){try{const r=await resize(f);const p=blank();Object.assign(p,r);p.num=nextNum();await req(st('readwrite').put(p));n++}catch(x){}}
+  for(const f of files){try{const r=await resize(f);const p=blank();Object.assign(p,r);p.photos=[r];p.num=nextNum();await req(st('readwrite').put(p));n++}catch(x){}}
   e.target.value='';await load();alert(n+' unidentified record(s) created. Tap each to add the name.');
 };
 
@@ -233,6 +250,7 @@ function openMenu(){
   <label>Include</label><select id="w_scope"><option value="complete">Complete profiles only</option><option value="named">All named profiles</option></select>
   <label><input type="checkbox" id="w_pg" checked style="width:auto"> Page numbers</label>
   <label><input type="checkbox" id="w_one" checked style="width:auto"> Start each profile on a new page</label>
+  <label><input type="checkbox" id="w_all" checked style="width:auto"> Include all photos (untick for main photo only)</label>
   <label><input type="checkbox" id="w_toc" checked style="width:auto"> Contents page</label>
   <button style="width:100%;margin:10px 0" onclick="wordDoc()">Generate Word document</button>
   <button class="g" style="width:100%" onclick="closeM()">Close</button>`);
@@ -271,6 +289,28 @@ function csv(){
   const rows=[['Number','Title','Name','Surname','Has bio','Has photo','Sent by','Notes']].concat(ALL.map(p=>[p.num,p.title,p.name,p.surname,p.bio?'Y':'N',p.photo?'Y':'N',p.sender,p.notes]));
   download(new Blob(['\ufeff'+rows.map(r=>r.map(c=>'"'+String(c||'').replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}),'retirees.csv');
 }
+/* WhatsApp formatting -> real Word formatting */
+function waRuns(text,base){
+  const {TextRun}=docx;
+  const L='(^|[\\s(\\[{"\'“])',R='(?=$|[\\s.,;:!?)\\]}"\'”])';
+  const mk=(c,f)=>[new RegExp(L+'\\'+c+'(?=\\S)([^'+'\\'+c+'\\n]*?\\S)\\'+c+R),f];
+  const pats=[mk('*',{bold:true}),mk('_',{italics:true}),mk('~',{strike:true}),[/()```([\s\S]+?)```/,{font:'Consolas'}]];
+  let best=null;
+  for(const [re,f] of pats){const m=re.exec(text);if(m&&(!best||m.index<best.m.index))best={m,f}}
+  if(!best)return text?[new TextRun({text,...base})]:[];
+  const {m,f}=best,start=m.index+m[1].length,end=m.index+m[0].length;
+  return [...waRuns(text.slice(0,start),base),...waRuns(m[2],{...base,...f}),...waRuns(text.slice(end),base)];
+}
+function bioParas(bio){
+  const {Paragraph}=docx;
+  return (bio||'').replace(/[‎‏]/g,'').split(/\n+/).map(x=>x.trim()).filter(Boolean).map(par=>{
+    const bm=/^[*\-•]\s+(.*)$/.exec(par);
+    par=par.replace(/^>\s?/,'');
+    const base={size:22,font:'Calibri',color:'333333'};
+    if(bm)return new Paragraph({spacing:{after:100,line:276},indent:{left:400,hanging:260},children:waRuns('•  '+bm[1],base)});
+    return new Paragraph({spacing:{after:140,line:276},children:waRuns(par,base)});
+  });
+}
 async function wordDoc(){
   if(!window.docx){alert('The Word library did not load. Check your internet connection and reload.');return}
   const {Document,Packer,Paragraph,TextRun,ImageRun,AlignmentType,Footer,PageNumber,TableOfContents,HeadingLevel}=docx;
@@ -278,6 +318,7 @@ async function wordDoc(){
   const scope=document.getElementById('w_scope').value;
   const useToc=document.getElementById('w_toc').checked;
   const onePer=document.getElementById('w_one').checked;
+  const allPics=document.getElementById('w_all').checked;
   let list=ALL.filter(p=>scope==='complete'?complete(p):p.name);
   const excluded=ALL.length-list.length;
   const incomplete=list.filter(p=>!complete(p)).length;
@@ -313,16 +354,17 @@ async function wordDoc(){
       pageBreakBefore:onePer||i===0,
       spacing:{before:i===0||onePer?200:360,after:150},
       children:[new TextRun({text:fullName,bold:true,size:28,font:'Georgia',color:'1F4E79'})]}));
-    if(p.photo){
-      const bin=Uint8Array.from(atob(p.photo.split(',')[1]),c=>c.charCodeAt(0));
-      const s=Math.min(180/p.pw,220/p.ph);
+    const pics=photosOf(p).slice(0,allPics?99:1);
+    if(pics.length){
       kids.push(new Paragraph({keepNext:!!p.bio,spacing:{after:150},
-        children:[new ImageRun({data:bin,transformation:{width:Math.round(p.pw*s),height:Math.round(p.ph*s)}})]}));
+        children:pics.flatMap((q,k)=>{
+          const bin=Uint8Array.from(atob(q.photo.split(',')[1]),c=>c.charCodeAt(0));
+          const sc=Math.min(180/q.pw,220/q.ph);
+          const r=[new ImageRun({data:bin,transformation:{width:Math.round(q.pw*sc),height:Math.round(q.ph*sc)}})];
+          if(k<pics.length-1)r.push(new TextRun({text:'   '}));
+          return r;})}));
     }
-    (p.bio||'').split(/\n+/).filter(Boolean).forEach(par=>{
-      kids.push(new Paragraph({spacing:{after:140,line:276},
-        children:[new TextRun({text:par,size:22,font:'Calibri',color:'333333'})]}));
-    });
+    kids.push(...bioParas(p.bio));
   });
 
   const footers=document.getElementById('w_pg').checked?{
@@ -342,4 +384,4 @@ async function wordDoc(){
 init();
 </script>
 </body>
-  </html> 
+</html>
