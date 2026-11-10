@@ -59,6 +59,7 @@ button.g{background:#e8e6df;color:var(--ink)}button.d{background:var(--warn)}
 </head>
 <body>
 
+<!-- Login Screen -->
 <div id="login" class="login" style="display:none">
   <h1>Admin Login</h1>
   <p class="small">Sign in to manage retiree profiles.</p>
@@ -71,6 +72,7 @@ button.g{background:#e8e6df;color:var(--ink)}button.d{background:var(--warn)}
   <p style="text-align:center;margin-top:15px;"><a href="#" onclick="event.preventDefault();showPublicView()" class="small">&larr; Back to Public Directory</a></p>
 </div>
 
+<!-- Main App Screen -->
 <div id="app">
   <header>
     <h1>Retiree Profiles <small id="sync"></small></h1>
@@ -182,7 +184,7 @@ function updateStats() {
   const noPhoto = retirees.filter(r => !r.photoUrl && (!r.photos || r.photos.length === 0)).length;
   const noBio = retirees.filter(r => !r.bio && !r.notes).length;
   const noName = retirees.filter(r => !r.name).length;
-  const duplicates = 0; // Placeholder calculation
+  const duplicates = 0;
 
   const pct = total > 0 ? Math.round((complete / total) * 100) : 0;
   $('prog').style.width = pct + '%';
@@ -237,6 +239,7 @@ function renderList() {
     const el = document.createElement('div');
     el.className = 'item';
     
+    // Read photoUrl directly as primary field, with fallback to photos array
     let thumb = item.photoUrl;
     if (!thumb && item.photos && item.photos.length > 0) {
       thumb = typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url;
@@ -263,6 +266,7 @@ function renderList() {
   });
 }
 
+// Exact compressImage implementation resized to max 300px and JPEG quality 0.7
 function compressImage(file, callback) {
   const reader = new FileReader();
   reader.onload = function(e) {
@@ -276,7 +280,8 @@ function compressImage(file, callback) {
       } else {
         if (h > MAX_SIZE) { w *= MAX_SIZE / h; h = MAX_SIZE; }
       }
-      canvas.width = w; canvas.height = h;
+      canvas.width = w; 
+      canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
       callback(canvas.toDataURL('image/jpeg', 0.7));
