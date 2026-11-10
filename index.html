@@ -180,8 +180,8 @@ function fetchRetirees() {
 
 function updateStats() {
   const total = retirees.length;
-  const complete = retirees.filter(r => r.name && (r.photoUrl || (r.photos && r.photos.length > 0)) && (r.bio || r.notes)).length;
-  const noPhoto = retirees.filter(r => !r.photoUrl && (!r.photos || r.photos.length === 0)).length;
+  const complete = retirees.filter(r => r.name && (r.thumb || (r.photoCount && r.photoCount > 0)) && (r.bio || r.notes)).length;
+  const noPhoto = retirees.filter(r => !r.thumb && (!r.photoCount || r.photoCount === 0)).length;
   const noBio = retirees.filter(r => !r.bio && !r.notes).length;
   const noName = retirees.filter(r => !r.name).length;
   const duplicates = 0;
@@ -216,7 +216,7 @@ function renderList() {
     const bioStr = (r.bio || r.notes || '').toLowerCase();
     const matchesQuery = nameStr.includes(query) || numStr.includes(query) || bioStr.includes(query);
 
-    let hasPhoto = !!r.photoUrl || (r.photos && r.photos.length > 0);
+    let hasPhoto = !!r.thumb || (r.photoCount && r.photoCount > 0);
     let hasBio = !!r.bio || !!r.notes;
     let hasName = !!r.name;
 
@@ -239,11 +239,8 @@ function renderList() {
     const el = document.createElement('div');
     el.className = 'item';
     
-    // Read photoUrl directly as primary field, with fallback to photos array
-    let thumb = item.photoUrl;
-    if (!thumb && item.photos && item.photos.length > 0) {
-      thumb = typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url;
-    }
+    // Read thumb field directly from parent profile document
+    const thumb = item.thumb || '';
 
     const imgHtml = thumb 
       ? `<img class="ph" src="${thumb}" alt="Photo">` 
@@ -266,25 +263,43 @@ function renderList() {
   });
 }
 
-// Exact compressImage implementation resized to max 300px and JPEG quality 0.7
-function compressImage(file, callback) {
+// Photo compression and thumbnail generation (Max 300px, JPEG 0.7)
+function processImageFile(file, callback) {
   const reader = new FileReader();
   reader.onload = function(e) {
     const img = new Image();
     img.onload = function() {
-      const canvas = document.createElement('canvas');
-      const MAX_SIZE = 300;
-      let w = img.width, h = img.height;
-      if (w > h) {
-        if (w > MAX_SIZE) { h *= MAX_SIZE / w; w = MAX_SIZE; }
-      } else {
-        if (h > MAX_SIZE) { w *= MAX_SIZE / h; h = MAX_SIZE; }
-      }
-      canvas.width = w; 
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      callback(canvas.toDataURL('image/jpeg', 0.7));
+      const pw = img.width;
+      const ph = img.height;
+      
+      // Full image canvas (max 1200px or original)
+      const canvasFull = document.createElement('canvas');
+      let wF = pw, hF = ph;
+      const MAX_F = 1000;
+      if (wF > hF) { if (wF > MAX_F) { hF *= MAX_F / wF; wF = MAX_F; } }
+      else { if (hF > MAX_F) { wF *= MAX_F / hF; hF = MAX_F; } }
+      canvasFull.width = wF; canvasFull.height = hF;
+      const ctxF = canvasFull.getContext('2d');
+      ctxF.drawImage(img, 0, 0, wF, hF);
+      const dataUrl = canvasFull.toDataURL('image/jpeg', 0.7);
+
+      // Thumbnail canvas (max 300px)
+      const canvasThumb = document.createElement('canvas');
+      let wT = pw, hT = ph;
+      const MAX_T = 300;
+      if (wT > hT) { if (wT > MAX_T) { hT *= MAX_T / wT; wT = MAX_T; } }
+      else { if (hT > MAX_T) { wT *= MAX_T / hT; hT = MAX_T; } }
+      canvasThumb.width = wT; canvasThumb.height = hT;
+      const ctxT = canvasThumb.getContext('2d');
+      ctxT.drawImage(img, 0, 0, wT, hT);
+      const thumbUrl = canvasThumb.toDataURL('image/jpeg', 0.7);
+
+      callback({
+        data: dataUrl,
+        thumb: thumbUrl,
+        pw: pw,
+        ph: ph
+      });
     };
     img.src = e.target.result;
   };
@@ -294,15 +309,11 @@ function compressImage(file, callback) {
 function openView(item) {
   const modal = $('m');
   const sheet = $('sheet');
-  let thumb = item.photoUrl;
-  if (!thumb && item.photos && item.photos.length > 0) {
-    thumb = typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url;
-  }
-
+  
   sheet.innerHTML = `
     <h2>${item.name || 'Unnamed Profile'}</h2>
     <p><strong>ID Number:</strong> ${item.number || 'N/A'}</p>
-    ${thumb ? `<img src="${thumb}" style="max-width:100%;border-radius:8px;margin-bottom:12px;">` : ''}
+    <div id="modal_photos" style="margin-bottom:12px;">Loading photos...</div>
     <p><strong>Bio / Notes:</strong> ${item.bio || item.notes || 'No extra notes.'}</p>
     <div style="display:flex;gap:8px;margin-top:16px;">
       ${currentUser ? `<button onclick="openForm('${item.id}')">Edit</button><button class="d" onclick="deleteProfile('${item.id}')">Delete</button>` : ''}
@@ -310,13 +321,31 @@ function openView(item) {
     </div>
   `;
   modal.classList.add('show');
+
+  // Retrieve photos subcollection sorted by order
+  db.collection('profiles').doc(item.id).collection('photos').orderBy('order').get().then(snapshot => {
+    const photosContainer = $('modal_photos');
+    if (snapshot.empty) {
+      photosContainer.innerHTML = item.thumb ? `<img src="${item.thumb}" style="max-width:100%;border-radius:8px;">` : '<em>No photos attached.</em>';
+      return;
+    }
+    let html = '';
+    snapshot.forEach(doc => {
+      const pData = doc.data();
+      if (pData.data) {
+        html += `<img src="${pData.data}" style="max-width:100%;border-radius:8px;margin-bottom:8px;display:block;">`;
+      }
+    });
+    photosContainer.innerHTML = html || '<em>No photos attached.</em>';
+  }).catch(err => {
+    $('modal_photos').innerHTML = item.thumb ? `<img src="${item.thumb}" style="max-width:100%;border-radius:8px;">` : 'Could not load photos.';
+  });
 }
 
 function openForm(id = null) {
   const item = id ? retirees.find(r => r.id === id) : {};
   const modal = $('m');
   const sheet = $('sheet');
-  let thumb = item.photoUrl || (item.photos && item.photos[0] ? (typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url) : '');
 
   sheet.innerHTML = `
     <h2>${id ? 'Edit' : 'Add'} Profile</h2>
@@ -328,7 +357,7 @@ function openForm(id = null) {
       <label>Photo</label>
       <div id="pz" onclick="$('f_photo').click()">
         <span class="upload-icon">📷</span>
-        <span>${thumb ? 'Click to replace photo' : 'Click to select photo'}</span>
+        <span>${item.thumb ? 'Click to replace/add photo' : 'Click to select photo'}</span>
       </div>
       <input type="file" id="f_photo" accept="image/*" onchange="previewPhoto(this)">
       <label>Bio / Notes</label>
@@ -342,33 +371,48 @@ function openForm(id = null) {
   modal.classList.add('show');
 }
 
-let tempPhotoUrl = null;
+let tempPhotoPayload = null;
 function previewPhoto(input) {
   if (input.files && input.files[0]) {
-    compressImage(input.files[0], url => {
-      tempPhotoUrl = url;
-      $('pz').innerHTML = `<img src="${url}" style="height:60px;border-radius:6px;"><span>Photo ready</span>`;
+    processImageFile(input.files[0], res => {
+      tempPhotoPayload = res;
+      $('pz').innerHTML = `<img src="${res.thumb}" style="height:60px;border-radius:6px;"><span>Photo ready</span>`;
     });
   }
 }
 
 function saveProfile(id) {
   if (!currentUser) return alert("Admin login required.");
+  const profileRef = id ? db.collection('profiles').doc(id) : db.collection('profiles').doc();
+  
   const payload = {
     name: $('f_name').value,
     number: $('f_num').value,
     bio: $('f_notes').value
   };
-  if (tempPhotoUrl) payload.photoUrl = tempPhotoUrl;
 
-  const promise = id 
-    ? db.collection('profiles').doc(id).update(payload)
-    : db.collection('profiles').add(payload);
+  if (tempPhotoPayload) {
+    payload.thumb = tempPhotoPayload.thumb;
+  }
 
-  promise.then(() => {
-    tempPhotoUrl = null;
+  profileRef.set(payload, { merge: true }).then(() => {
+    if (tempPhotoPayload) {
+      const photoRef = profileRef.collection('photos').doc();
+      return photoRef.set({
+        data: tempPhotoPayload.data,
+        thumb: tempPhotoPayload.thumb,
+        pw: tempPhotoPayload.pw,
+        ph: tempPhotoPayload.ph,
+        order: 0,
+        created: firebase.firestore.FieldValue.serverTimestamp()
+      }).then(() => {
+        return profileRef.update({ photoCount: firebase.firestore.FieldValue.increment(1) });
+      });
+    }
+  }).then(() => {
+    tempPhotoPayload = null;
     closeModal();
-    toast("Profile saved!");
+    toast("Profile saved successfully!");
   }).catch(err => alert("Error: " + err.message));
 }
 
@@ -438,11 +482,22 @@ function handleRestore(file) {
 function handleQuickPhotos(files) {
   if (!files.length || !currentUser) return;
   Array.from(files).forEach(file => {
-    compressImage(file, url => {
-      db.collection('profiles').add({
+    processImageFile(file, res => {
+      const profileRef = db.collection('profiles').doc();
+      profileRef.set({
         name: file.name.replace(/\.[^/.]+$/, ""),
-        photoUrl: url,
+        thumb: res.thumb,
+        photoCount: 1,
         number: ''
+      }).then(() => {
+        profileRef.collection('photos').add({
+          data: res.data,
+          thumb: res.thumb,
+          pw: res.pw,
+          ph: res.ph,
+          order: 0,
+          created: firebase.firestore.FieldValue.serverTimestamp()
+        });
       });
     });
   });
