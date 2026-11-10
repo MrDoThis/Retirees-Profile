@@ -59,7 +59,7 @@ button.s{padding:6px 10px;font-size:12px;flex:0 0 auto;margin-left:6px}
 pre{background:#f1efe8;padding:10px;border-radius:8px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
 </style>
 
-<!-- Firebase SDKs (Compat Version) -->
+<!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -105,7 +105,6 @@ pre{background:#f1efe8;padding:10px;border-radius:8px;overflow:auto;font-size:12
 <div class="toast" id="toast"></div>
 
 <script>
-// Your verified Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDIgOqBXt5P7OaPwbls2Zsf7NZ5Axv54lg",
   authDomain: "retirees-profile.firebaseapp.com",
@@ -182,7 +181,8 @@ function resetPw() {
 }
 
 function fetchRetirees() {
-  db.collection('retirees').onSnapshot(snapshot => {
+  // Connected to your exact Firestore collection name 'profiles'
+  db.collection('profiles').onSnapshot(snapshot => {
     retirees = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     updateStats();
     renderList();
@@ -193,10 +193,10 @@ function fetchRetirees() {
 
 function updateStats() {
   const total = retirees.length;
-  const withPhoto = retirees.filter(r => r.photoUrl).length;
+  const withPhoto = retirees.filter(r => r.photoUrl || r.bio).length;
   $('stats').innerHTML = `
     <div class="stat ${currentFilter==='all'?'on':''}" onclick="setFilter('all')"><b>${total}</b><span>Total</span></div>
-    <div class="stat ${currentFilter==='photo'?'on':''}" onclick="setFilter('photo')"><b>${withPhoto}</b><span>Has Photo</span></div>
+    <div class="stat ${currentFilter==='photo'?'on':''}" onclick="setFilter('photo')"><b>${withPhoto}</b><span>Has Details</span></div>
   `;
 }
 
@@ -212,8 +212,9 @@ function renderList() {
   listEl.innerHTML = '';
 
   const filtered = retirees.filter(r => {
-    const matchesQuery = (r.name && r.name.toLowerCase().includes(query)) || (r.number && r.number.toLowerCase().includes(query));
-    const matchesFilter = currentFilter === 'photo' ? !!r.photoUrl : true;
+    const titleText = (r.name || r.bio || '').toLowerCase();
+    const matchesQuery = titleText.includes(query) || (r.number && r.number.toLowerCase().includes(query));
+    const matchesFilter = currentFilter === 'photo' ? !!(r.photoUrl || r.bio) : true;
     return matchesQuery && matchesFilter;
   });
 
@@ -226,14 +227,17 @@ function renderList() {
     const el = document.createElement('div');
     el.className = 'item';
     const imgHtml = item.photoUrl 
-      ? `<img class="ph" src="${item.photoUrl}" alt="${item.name || ''}">` 
-      : `<div class="ph">No Photo</div>`;
+      ? `<img class="ph" src="${item.photoUrl}" alt="Profile">` 
+      : `<div class="ph">Photo</div>`;
+    
+    // Support fields from your existing documents (like 'bio' or 'name')
+    const displayName = item.name || (item.bio ? item.bio.slice(0, 45) + '...' : 'Unnamed Profile');
     
     el.innerHTML = `
       ${imgHtml}
       <div class="t">
-        <div class="n">${item.name || 'Unnamed Profile'}</div>
-        <div class="s">${item.number || 'No ID Number'}</div>
+        <div class="n">${displayName}</div>
+        <div class="s">${item.number || item.created ? 'ID / Record' : 'No ID'}</div>
       </div>
     `;
     el.onclick = () => openView(item);
@@ -268,10 +272,10 @@ function openView(item) {
   const modal = $('m');
   const sheet = $('sheet');
   sheet.innerHTML = `
-    <h2>${item.name || 'Unnamed'}</h2>
+    <h2>${item.name || 'Profile Details'}</h2>
     <p><strong>ID Number:</strong> ${item.number || 'N/A'}</p>
     ${item.photoUrl ? `<img src="${item.photoUrl}" style="max-width:100%;border-radius:8px;margin-bottom:12px;">` : ''}
-    <p><strong>Details:</strong> ${item.notes || 'No extra notes.'}</p>
+    <p><strong>Notes / Bio:</strong> ${item.notes || item.bio || 'No extra notes.'}</p>
     <div style="display:flex;gap:8px;margin-top:16px;">
       ${currentUser ? `<button onclick="openForm('${item.id}')">Edit</button><button class="d" onclick="deleteProfile('${item.id}')">Delete</button>` : ''}
       <button class="g" onclick="closeModal()">Close</button>
@@ -298,7 +302,7 @@ function openForm(id = null) {
       </div>
       <input type="file" id="f_photo" accept="image/*" onchange="previewPhoto(this)">
       <label>Notes</label>
-      <textarea id="f_notes">${item.notes || ''}</textarea>
+      <textarea id="f_notes">${item.notes || item.bio || ''}</textarea>
       <div style="display:flex;gap:8px;margin-top:16px;">
         <button type="submit">Save Profile</button>
         <button type="button" class="g" onclick="closeModal()">Cancel</button>
@@ -328,8 +332,8 @@ function saveProfile(id) {
   if (tempPhotoUrl) payload.photoUrl = tempPhotoUrl;
 
   const promise = id 
-    ? db.collection('retirees').doc(id).update(payload)
-    : db.collection('retirees').add(payload);
+    ? db.collection('profiles').doc(id).update(payload)
+    : db.collection('profiles').add(payload);
 
   promise.then(() => {
     tempPhotoUrl = null;
@@ -341,7 +345,7 @@ function saveProfile(id) {
 function deleteProfile(id) {
   if (!currentUser) return alert("Admin login required.");
   if (confirm("Are you sure you want to delete this retiree profile?")) {
-    db.collection('retirees').doc(id).delete().then(() => {
+    db.collection('profiles').doc(id).delete().then(() => {
       closeModal();
       toast("Profile deleted.");
     });
@@ -372,7 +376,7 @@ function exportJSON() {
   const blob = new Blob([data], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `retirees_backup_${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `profiles_backup_${new Date().toISOString().slice(0,10)}.json`;
   a.click();
 }
 
@@ -385,7 +389,7 @@ function handleRestore(file) {
       if (Array.isArray(items)) {
         const batch = db.batch();
         items.forEach(item => {
-          const ref = db.collection('retirees').doc();
+          const ref = db.collection('profiles').doc();
           delete item.id;
           batch.set(ref, item);
         });
@@ -405,7 +409,7 @@ function handleQuickPhotos(files) {
   if (!files.length || !currentUser) return;
   Array.from(files).forEach(file => {
     compressImage(file, url => {
-      db.collection('retirees').add({
+      db.collection('profiles').add({
         name: file.name.replace(/\.[^/.]+$/, ""),
         photoUrl: url,
         number: ''
