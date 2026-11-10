@@ -48,6 +48,11 @@ button.s{padding:6px 10px;font-size:12px;flex:0 0 auto;margin-left:6px}
 .err{color:var(--warn);font-size:14px;min-height:20px;margin:8px 0}
 .toast{position:fixed;left:12px;right:12px;bottom:90px;background:#1d2433;color:#fff;border-radius:10px;padding:12px 14px;z-index:20;display:none;font-size:14px;max-width:520px;margin:0 auto}
 .toast.show{display:block}
+#pz{border:2px dashed var(--line);border-radius:10px;padding:18px 14px;text-align:center;color:var(--mut);font-size:14px;margin-top:6px;min-height:92px;outline:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;cursor:pointer;transition:border-color .15s,background .15s}
+#pz:focus,#pz.dragover{border-color:var(--acc);background:#eef5fb}
+#pz .upload-icon{font-size:25px;line-height:1.2}
+#pz .upload-hint{font-size:12px;color:var(--mut)}
+#f_photo{display:none}
 pre{background:#f1efe8;padding:10px;border-radius:8px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
 </style>
 </head>
@@ -20403,14 +20408,19 @@ async function openForm(id){
    <div id="picmsg" class="small"></div>
    <label>Add photo(s)</label>
    <input type="file" id="f_photo" accept="image/*" multiple>
+   <div id="pz" role="button" tabindex="0" aria-label="Add photos by dragging, dropping, or pasting" onclick="$('f_photo').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();$('f_photo').click()}">
+     <span class="upload-icon">＋</span>
+     <strong>Drop image(s) here</strong>
+     <span class="upload-hint">or click to choose from your device · Ctrl+V to paste a copied image</span>
+   </div>
+   <button class="g" id="pbtn" style="width:100%;margin-top:6px" onclick="pasteBtn()">Paste image from clipboard</button>
    <label>Sent by</label><input id="f_sender" value="${esc(p.sender)}">
    <label>Notes</label><input id="f_notes" value="${esc(p.notes)}">
    <div class="row" style="margin-top:16px"><button class="g" onclick="closeM()">Cancel</button><button id="savebtn" onclick="saveForm()">Save</button></div>
    ${p.isNew?'':'<div class="row" style="margin-top:10px"><button class="d" onclick="del()">Delete profile</button></div>'}`);
   $('f_name').oninput=chkDups;chkDups();
-  $('f_photo').onchange=async e=>{
-    for(const f of [...e.target.files]){try{const r=await resize(f);CUR.pics.push({...r,isNew:true})}catch(x){toast(x.message)}}
-    e.target.value='';drawPics()};
+  $('f_photo').onchange=async e=>{await addFiles([...e.target.files]);e.target.value=''};
+  setupPhotoDropzone();
   drawPics();
   if(p.picsState==='loading'){
     try{
@@ -20423,11 +20433,55 @@ async function openForm(id){
     drawPics();
   }
 }
+function setupPhotoDropzone(){
+  const zone=$('pz');
+  if(!zone)return;
+  ['dragenter','dragover'].forEach(type=>zone.addEventListener(type,e=>{
+    e.preventDefault();e.stopPropagation();
+    if(CUR&&CUR.picsState==='ok')zone.classList.add('dragover');
+  }));
+  ['dragleave','dragend'].forEach(type=>zone.addEventListener(type,e=>{
+    e.preventDefault();e.stopPropagation();zone.classList.remove('dragover');
+  }));
+  zone.addEventListener('drop',async e=>{
+    e.preventDefault();e.stopPropagation();zone.classList.remove('dragover');
+    if(!CUR||CUR.picsState!=='ok')return;
+    const files=[...(e.dataTransfer?.files||[])].filter(f=>f.type&&f.type.startsWith('image/'));
+    if(!files.length){toast('Please drop an image file.');return}
+    const n=await addFiles(files);
+    if(n)toast(n+' photo(s) added. Tap Save to keep them.');
+  });
+}
+
+async function addFiles(files){
+  if(!CUR||CUR.picsState!=='ok'){toast('Photos are still loading. Try again in a moment.');return}
+  let n=0;
+  for(const f of files){try{const r=await resize(f);CUR.pics.push({...r,isNew:true});n++}catch(x){toast(x.message)}}
+  drawPics();return n;
+}
+document.addEventListener('paste',e=>{
+  if(!formOpen||!CUR||!$('pics'))return;
+  const cd=e.clipboardData;if(!cd)return;
+  let files=[...(cd.files||[])].filter(f=>f.type.startsWith('image/'));
+  if(!files.length)files=[...(cd.items||[])].filter(i=>i.type&&i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);
+  if(!files.length){if(e.target&&e.target.id==='pz')e.preventDefault();return}
+  e.preventDefault();
+  addFiles(files).then(n=>{if(n)toast(n+' photo(s) added. Tap Save to keep them.')});
+});
+async function pasteBtn(){
+  if(!navigator.clipboard||!navigator.clipboard.read){toast('This browser cannot read the clipboard. Use the paste box instead.',6000);return}
+  try{
+    const items=await navigator.clipboard.read(),files=[];
+    for(const it of items)for(const t of it.types)if(t.startsWith('image/')){const bl=await it.getType(t);files.push(new File([bl],'pasted.'+t.split('/')[1],{type:t}))}
+    if(!files.length){toast('There is no image on the clipboard.');return}
+    const n=await addFiles(files);if(n)toast(n+' photo(s) added. Tap Save to keep them.');
+  }catch(e){toast('Could not read the clipboard. Use the paste box instead.',6000)}
+}
 function drawPics(){
   const box=$('pics');if(!box)return;
   const st=CUR.picsState;
   $('savebtn').disabled=(st==='loading');
-  $('f_photo').disabled=(st!=='ok');
+  $('f_photo').disabled=(st!=='ok');$('pbtn').disabled=(st!=='ok');$('pz').style.pointerEvents=(st==='ok')?'auto':'none';$('pz').style.opacity=(st==='ok')?'1':'.55';
   $('picmsg').textContent=st==='loading'?'Loading photos…':st==='fail'?'Photos could not be loaded (no connection?). You can still edit the text; reconnect to change photos.':'';
   box.innerHTML=CUR.pics.length?CUR.pics.map((q,i)=>`<div style="width:110px;text-align:center">
     <img src="${q.photo}" style="width:110px;height:130px;object-fit:cover;border-radius:8px;${i===0?'outline:3px solid var(--acc)':''}">
