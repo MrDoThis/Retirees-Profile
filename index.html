@@ -54,16 +54,13 @@ button.s{padding:6px 10px;font-size:12px;flex:0 0 auto;margin-left:6px}
 #pz .upload-hint{font-size:12px;color:var(--mut)}
 #f_photo{display:none}
 pre{background:#f1efe8;padding:10px;border-radius:8px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
-.rolepill{display:inline-block;background:#e8eef5;color:#1f4e79;border-radius:12px;padding:3px 8px;font-size:11px;margin-left:6px}.gallery{padding:8px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}.gallery-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px;cursor:pointer;min-width:0}.gallery-card img{width:100%;height:145px;object-fit:cover;border-radius:7px;background:#eee}.gallery-card .n{font-size:13px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body>
 
-<div id="login" class="login" style="display:none;position:fixed;inset:0;z-index:30;background:var(--bg);max-width:none;overflow:auto">
-  <div style="max-width:380px;margin:0 auto;padding-top:40px">
-  <button class="g" style="float:right" onclick="hideLogin()">Close</button>
+<div id="login" class="login" style="display:none">
   <h1>Retiree Profiles</h1>
-  <p class="small">Owner and authorised editor sign-in.</p>
+  <p class="small">Sign in to open your profiles.</p>
   <form onsubmit="event.preventDefault();doLogin()">
     <label>Email</label><input id="lg_e" type="email" autocomplete="username" required>
     <label>Password</label><input id="lg_p" type="password" autocomplete="current-password" required>
@@ -71,20 +68,19 @@ pre{background:#f1efe8;padding:10px;border-radius:8px;overflow:auto;font-size:12
     <button type="submit" style="width:100%">Sign in</button>
   </form>
   <p style="text-align:center"><a href="#" onclick="event.preventDefault();resetPw()" class="small">Forgot password?</a></p>
-  </div>
 </div>
 
 <div id="app" style="display:none">
-  <header><h1>Retiree Profiles<small id="sync"></small><button id="ownerLoginBtn" class="g" style="float:right;padding:6px 10px;font-size:12px" onclick="showLogin()">Owner / Editor sign in</button></h1></header>
+  <header><h1>Retiree Profiles<small id="sync"></small></h1></header>
   <div id="legacy"></div>
   <div class="stats" id="stats"></div>
   <div class="bar"><i id="prog"></i></div>
-  <div class="tools"><input id="q" placeholder="Search name or number…"><button class="g" style="flex:0 0 auto" onclick="toggleGallery()" id="viewBtn">Photos</button></div>
+  <div class="tools"><input id="q" placeholder="Search name or number…"></div>
   <div class="list" id="list"></div>
-  <nav id="mainnav">
-    <button id="addNav" onclick="openForm()">+ Add</button>
-    <button id="quickNav" class="g" onclick="$('quick').click()">Quick add photos</button>
-    <button class="g" onclick="openMenu()">Menu</button>
+  <nav>
+    <button onclick="openForm()">+ Add</button>
+    <button class="g" onclick="$('quick').click()">Quick add photos</button>
+    <button class="g" onclick="openMenu()">Export / Backup</button>
   </nav>
   <input type="file" id="quick" accept="image/*" multiple hidden>
   <input type="file" id="restore" accept=".json" hidden>
@@ -20246,9 +20242,7 @@ const firebaseConfig = {
 <script>
 /* ================= state ================= */
 const $=(i)=>document.getElementById(i);
-let db,auth,U=null,ROLE='viewer',IS_OWNER=false,IS_PUBLIC=false,RAW=[],ALL=[],CUR=null,filter='all',dupSet=new Set(),unsub=null,numBusy=false,formOpen=false,legacyList=[],galleryMode=false;
-const OWNER_UID='ukxcBw9DgbcDPGJ33WO9Cm6nK1o2';
-const canWrite=()=>IS_OWNER||ROLE==='editor';
+let db,auth,U=null,RAW=[],ALL=[],CUR=null,filter='all',dupSet=new Set(),unsub=null,numBusy=false,formOpen=false,legacyList=[];
 const fmt=(n)=>'RET-'+String(n).padStart(3,'0');
 function toast(t,ms=3500){const e=$('toast');e.textContent=t;e.classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove('show'),ms)}
 const fire=(p,msg)=>Promise.resolve(p).catch(e=>{console.error(e);toast((msg||'Could not save')+' ('+(e.code||e.message)+')',8000)});
@@ -20263,20 +20257,10 @@ function boot(){
   db=firebase.firestore();auth=firebase.auth();
   try{db.settings({cacheSizeBytes:firebase.firestore.CACHE_SIZE_UNLIMITED,merge:true})}catch(e){}
   try{db.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn('persistence:',e.code))}catch(e){}
-  auth.onAuthStateChanged(async u=>{
-    U=u;IS_OWNER=!!(u&&u.uid===OWNER_UID);ROLE=IS_OWNER?'owner':'viewer';
-    if(u){
-      try{
-        if(!IS_OWNER){const rs=await db.collection('users').doc(u.uid).get();if(!rs.exists||!['viewer','editor'].includes(rs.data().role)){await auth.signOut();$('lg_err').textContent='This account has not been granted access. Contact the owner.';return}ROLE=rs.data().role}
-        IS_PUBLIC=false;$('login').style.display='none';$('app').style.display='block';$('ownerLoginBtn').style.display='none';
-        $('addNav').style.display=canWrite()?'':'none';$('quickNav').style.display=canWrite()?'':'none';$('mainnav').style.display='';
-        $('sync').textContent=(IS_OWNER?'Owner':ROLE==='editor'?'Editor':'Viewer');
-        start();
-      }catch(e){console.error(e);$('lg_err').textContent='Could not verify your access. Please try again.';await auth.signOut()}
-    }else{
-      stop();IS_PUBLIC=true;ROLE='public';$('login').style.display='none';$('app').style.display='block';$('ownerLoginBtn').style.display='';
-      $('mainnav').style.display='none';$('addNav').style.display='none';$('quickNav').style.display='none';$('sync').textContent='Public directory';startPublic();
-    }
+  auth.onAuthStateChanged(u=>{
+    U=u;
+    if(u){$('login').style.display='none';$('app').style.display='block';start()}
+    else{stop();$('app').style.display='none';$('login').style.display='block'}
   });
 }
 function loginMsg(x){const c=x.code||'';
@@ -20284,8 +20268,6 @@ function loginMsg(x){const c=x.code||'';
   if(c==='auth/network-request-failed')return'No internet connection.';
   if(c==='auth/too-many-requests')return'Too many attempts. Wait a few minutes and try again.';
   return x.message||String(x)}
-function showLogin(){$('login').style.display='block';$('lg_err').textContent=''}
-function hideLogin(){$('login').style.display='none'}
 async function doLogin(){$('lg_err').textContent='';
   try{await auth.signInWithEmailAndPassword(val('lg_e'),$('lg_p').value)}catch(x){$('lg_err').textContent=loginMsg(x)}}
 async function resetPw(){const e=val('lg_e');if(!e){$('lg_err').textContent='Type your email first.';return}
@@ -20302,15 +20284,6 @@ function start(){
     render();assignNums();checkLegacy();
   },err=>fatal(err));
 }
-function startPublic(){
-  stop();
-  unsub=db.collection('publicProfiles').onSnapshot({includeMetadataChanges:true},snap=>{
-    RAW=snap.docs.map(d=>({id:d.id,...d.data()}));
-    ALL=RAW.filter(p=>!p.deleted);
-    const md=snap.metadata;$('sync').textContent=md.fromCache?'Offline copy':'Public directory';
-    render();
-  },err=>{console.error(err);$('sync').textContent='Directory unavailable';$('list').innerHTML='<div class="empty">The public directory is not available yet. Please try again later.</div>'});
-}
 function stop(){if(unsub){unsub();unsub=null}RAW=[];ALL=[]}
 function fatal(err){
   if(err&&err.code==='permission-denied'){
@@ -20323,35 +20296,10 @@ function fatal(err){
 const RULES=`rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function owner() { return signedIn() && request.auth.uid == 'ukxcBw9DgbcDPGJ33WO9Cm6nK1o2'; }
-    function role() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : ''; }
-    function canReadPrivate() { return owner() || role() in ['viewer', 'editor']; }
-    function canWrite() { return owner() || role() == 'editor'; }
-    match /users/{uid} {
-      allow read: if owner() || (signedIn() && request.auth.uid == uid);
-      allow create, update, delete: if owner();
+    match /{document=**} {
+      allow read, write: if request.auth != null
+        && request.auth.uid == 'ukxcBw9DgbcDPGJ33WO9Cm6nK1o2';
     }
-    match /profiles/{profileId} {
-      allow read: if canReadPrivate();
-      allow create, update, delete: if canWrite();
-      match /photos/{photoId} {
-        allow read: if canReadPrivate();
-        allow create, update, delete: if canWrite();
-      }
-    }
-    match /publicProfiles/{profileId} {
-      allow read: if true;
-      allow create, update, delete: if canWrite();
-      match /photos/{photoId} {
-        allow read: if true;
-        allow create, update, delete: if canWrite();
-      }
-    }
-    match /meta/{metaId} {
-      allow read, write: if canWrite();
-    }
-    match /{document=**} { allow read, write: if false; }
   }
 }`;
 
@@ -20363,10 +20311,10 @@ async function assignOne(id){
     if(!ps.exists||ps.data().num)return;
     const n=cs.exists?cs.data().next:1;
     t.set(cr,{next:n+1});t.update(pr,{num:fmt(n),seq:n});
-  }).then(()=>syncPublicProfile(id));
+  });
 }
 async function assignNums(){
-  if(numBusy||!navigator.onLine||!U||!canWrite())return;
+  if(numBusy||!navigator.onLine||!U)return;
   const need=RAW.filter(p=>!p.num).sort((a,b)=>(a.created||0)-(b.created||0));
   if(!need.length)return;
   numBusy=true;
@@ -20418,9 +20366,8 @@ const FILTERS=[
  ['noname','No name',p=>!p.name],
  ['dups','Duplicates?',p=>dupSet.has(p.id)]];
 $('q').oninput=()=>render();
-function toggleGallery(){galleryMode=!galleryMode;$('viewBtn').textContent=galleryMode?'List':'Photos';render()}
 function render(){
-  if(!U&&!IS_PUBLIC)return;
+  if(!U)return;
   dupSet=new Set(ALL.filter(p=>p.name&&similar(p.name,p).length).map(p=>p.id));
   const done=ALL.filter(complete).length;
   $('stats').innerHTML=FILTERS.map(([k,l,f])=>`<div class="stat ${filter===k?'on':''}" onclick="filter='${k}';render()"><b>${ALL.filter(f).length}</b><span>${l}</span></div>`).join('');
@@ -20429,71 +20376,26 @@ function render(){
   const f=FILTERS.find(x=>x[0]===filter)[2];
   const rows=ALL.filter(f).filter(p=>!q||((p.name||'')+' '+(p.num||'')).toLowerCase().includes(q))
     .sort((a,b)=>(a.name&&b.name)?surname(a).localeCompare(surname(b)):(a.name?-1:b.name?1:(a.created||0)-(b.created||0)));
-  $('list').innerHTML=rows.length?(galleryMode?`<div class="gallery">${rows.map(p=>`<div class="gallery-card" onclick="openForm('${p.id}')">${p.thumb?`<img src="${p.thumb}">`:'<div class="ph" style="width:100%;height:145px">no photo</div>'}<div class="n">${esc((p.title?p.title+' ':'')+(p.name||'Unidentified'))}</div><div class="s">${numOf(p)}</div></div>`).join('')}</div>`:rows.map(p=>`
+  $('list').innerHTML=rows.length?rows.map(p=>`
    <div class="item" onclick="openForm('${p.id}')">
      ${p.thumb?`<img class="ph" src="${p.thumb}">`:'<div class="ph">no photo</div>'}
      <div class="t"><div class="n">${esc((p.title?p.title+' ':'')+(p.name||'Unidentified'))}</div>
-     <div class="s">${numOf(p)}${(!IS_PUBLIC&&p.sender)?' · from '+esc(p.sender):''}</div>
+     <div class="s">${numOf(p)}${p.sender?' · from '+esc(p.sender):''}</div>
      <span class="tag ${p.name?'y':'n0'}">name</span><span class="tag ${p.bio?'y':'n0'}">bio</span><span class="tag ${p.photoCount>0?'y':'n0'}">photo${p.photoCount>1?' ×'+p.photoCount:''}</span>${dupSet.has(p.id)?'<span class="tag n0">possible duplicate</span>':''}</div>
-   </div>`).join('')):`<div class="empty">${ALL.length?'Nothing matches.':'No profiles yet.'}</div>`;
+   </div>`).join(''):`<div class="empty">${ALL.length?'Nothing matches.':'No profiles yet. Tap + Add or Quick add photos.'}</div>`;
 }
 
 /* ================= add / edit ================= */
 async function fetchPhotos(id){
-  const ref=db.collection(IS_PUBLIC?'publicProfiles':'profiles').doc(id).collection('photos');
+  const ref=db.collection('profiles').doc(id).collection('photos');
   try{return await Promise.race([ref.get(),new Promise((_,j)=>setTimeout(()=>j(new Error('timeout')),8000))])}
   catch(e){return await ref.get({source:'cache'})}
-}
-
-/* Publish only the public-safe fields; private sender/notes/duplicate metadata never leave profiles/. */
-async function syncPublicProfile(id){
-  if(!canWrite())return;
-  const privateRef=db.collection('profiles').doc(id),publicRef=db.collection('publicProfiles').doc(id);
-  const snap=await privateRef.get();
-  if(!snap.exists){
-    const old=await publicRef.collection('photos').get();
-    for(let i=0;i<old.docs.length;i+=400){const b=db.batch();old.docs.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}
-    await publicRef.delete().catch(()=>{});return;
-  }
-  const p=snap.data();
-  if(p.deleted){
-    const old=await publicRef.collection('photos').get();
-    for(let i=0;i<old.docs.length;i+=400){const b=db.batch();old.docs.slice(i,i+400).forEach(d=>b.delete(d.ref));await b.commit()}
-    await publicRef.delete().catch(()=>{});return;
-  }
-  const safe={title:p.title||'',name:p.name||'',surname:p.surname||'',bio:p.bio||'',created:p.created||0,updated:p.updated||Date.now(),num:p.num||'',photoCount:p.photoCount||0,thumb:p.thumb||''};
-  const photoSnap=await privateRef.collection('photos').get();
-  const oldSnap=await publicRef.collection('photos').get();
-  const wanted=new Set(photoSnap.docs.map(d=>d.id));
-  const ops=[];
-  oldSnap.docs.forEach(d=>{if(!wanted.has(d.id))ops.push({type:'delete',ref:d.ref})});
-  photoSnap.docs.forEach(d=>{const x=d.data();ops.push({type:'set',ref:publicRef.collection('photos').doc(d.id),data:{data:x.data||'',thumb:x.thumb||'',pw:x.pw||0,ph:x.ph||0,order:x.order||0,created:x.created||0}})});
-  await publicRef.set(safe,{merge:false});
-  for(let i=0;i<ops.length;i+=400){const b=db.batch();ops.slice(i,i+400).forEach(o=>o.type==='delete'?b.delete(o.ref):b.set(o.ref,o.data));await b.commit()}
-}
-async function publishAllProfiles(){
-  if(!IS_OWNER){toast('Only the owner can publish the directory.');return}
-  if(!confirm('Publish/update the public directory? Names, biographies and photos will be visible to anyone who has the website link. Private notes and sender details will not be copied.'))return;
-  try{
-    closeM();toast('Preparing public directory…',60000);
-    const snap=await db.collection('profiles').get();
-    for(let i=0;i<snap.docs.length;i++){
-      await syncPublicProfile(snap.docs[i].id);
-      if((i+1)%10===0)toast('Publishing '+(i+1)+' of '+snap.docs.length+' profiles…',60000);
-    }
-    toast('Public directory updated: '+snap.size+' profiles.',7000);
-  }catch(e){console.error(e);toast('Publishing failed: '+(e.code||e.message),10000)}
 }
 async function openForm(id){
   const base=id?RAW.find(p=>p.id===id):null;
   CUR=base?{...base}:{id:db.collection('profiles').doc().id,title:'',name:'',surname:'',bio:'',sender:'',notes:'',created:Date.now(),isNew:true};
   CUR.pics=[];CUR.removed=[];CUR.picsState=(base&&base.photoCount>0)?'loading':'ok';
   const p=CUR,myId=p.id;
-  if(!canWrite()){
-    sheet(`<h2>${esc((p.title?p.title+' ':'')+(p.name||'Unidentified'))}</h2><div class="small">${numOf(p)}</div><div id="viewerPics" style="display:flex;flex-wrap:wrap;gap:10px;margin:12px 0"></div><h3>Biography</h3><div style="white-space:pre-wrap;line-height:1.6">${esc(p.bio||'No biography added yet.')}</div><button class="g" style="width:100%;margin-top:18px" onclick="closeM()">Close</button>`);
-    if(p.photoCount>0){try{const snap=await fetchPhotos(myId);if(!formOpen||!CUR||CUR.id!==myId)return;const photos=snap.docs.map(d=>d.data()).sort((a,b)=>(a.order||0)-(b.order||0));$('viewerPics').innerHTML=photos.map(x=>`<img src="${x.data}" style="width:100%;max-width:180px;max-height:230px;object-fit:contain;border-radius:8px">`).join('')}catch(e){$('viewerPics').textContent='Photos could not be loaded.'}}
-    return;
-  }
   sheet(`
    <h2>${p.isNew?'New profile':numOf(p)}</h2>
    <div class="row"><div style="flex:1"><label>Title</label><input id="f_title" value="${esc(p.title)}" placeholder="Chief, Dr, Engr…"></div>
@@ -20599,7 +20501,6 @@ function notSame(o){
   chkDups();
 }
 async function saveForm(){
-  if(!canWrite()){toast('You do not have permission to edit profiles.');return}
   const fields={title:val('f_title'),name:val('f_name'),surname:val('f_sur'),bio:val('f_bio'),sender:val('f_sender'),notes:val('f_notes')};
   Object.assign(CUR,fields);
   const dup=similar(CUR.name,CUR);
@@ -20619,22 +20520,21 @@ async function saveForm(){
     });
   }
   b.set(ref,data,{merge:true});
-  try{await b.commit();await syncPublicProfile(CUR.id);closeM();toast('Saved and published.')}catch(e){console.error(e);toast('Could not save ('+(e.code||e.message)+')',8000)}
+  fire(b.commit(),'Could not save');
+  closeM();toast('Saved. It uploads automatically.');
 }
 function del(){
-  if(!IS_OWNER){toast('Only the owner can delete profiles.');return}
   if(!confirm('Delete '+numOf(CUR)+'?\n\nIt moves to "Deleted profiles" (Export / Backup menu), where you can restore it.'))return;
-  const id=CUR.id;db.collection('profiles').doc(id).update({deleted:true,updated:Date.now()}).then(()=>syncPublicProfile(id)).catch(e=>toast('Could not delete ('+(e.code||e.message)+')',8000));closeM();
+  fire(db.collection('profiles').doc(CUR.id).update({deleted:true,updated:Date.now()}));closeM();
 }
 $('quick').onchange=async e=>{
-  if(!canWrite()){toast('You do not have permission to add profiles.');e.target.value='';return}
   const files=[...e.target.files];let n=0;toast('Processing '+files.length+' photo(s)…',6000);
   for(const f of files){
     try{
       const r=await resize(f),ref=db.collection('profiles').doc(),b=db.batch(),now=Date.now()+n;
       b.set(ref,{title:'',name:'',surname:'',bio:'',sender:'',notes:'',created:now,updated:now,deleted:false,num:'',photoCount:1,thumb:r.thumb,notdup:[]});
       b.set(ref.collection('photos').doc(),{data:r.photo,thumb:r.thumb,pw:r.pw,ph:r.ph,order:0,created:now});
-      await b.commit();await syncPublicProfile(ref.id);n++;
+      fire(b.commit());n++;
     }catch(x){}
   }
   e.target.value='';toast(n+' unidentified record(s) created. Tap each to add the name.',6000);
@@ -20643,11 +20543,8 @@ $('quick').onchange=async e=>{
 /* ================= menu, backup, import ================= */
 function openMenu(){
   const nDel=RAW.filter(p=>p.deleted).length;
-  if(!IS_OWNER){sheet(`<h2>Directory</h2><p>You are signed in as <b>${esc(ROLE)}</b>. You can search names, browse photographs and read biographies.</p><button class="g" style="width:100%;margin:6px 0" onclick="signOut()">Sign out</button><button class="g" style="width:100%" onclick="closeM()">Close</button>`);return}
-  sheet(`<h2>Owner menu</h2>
-  <div class="warn">Profiles are stored online and sync to every authorised account. Keep a separate backup regularly.</div>
-  <button style="width:100%;margin:6px 0" onclick="publishAllProfiles()">Publish / update public directory</button>
-  <button style="width:100%;margin:6px 0" onclick="openUserManager()">Manage editor access</button>
+  sheet(`<h2>Export / Backup</h2>
+  <div class="warn">Your profiles are stored online and sync to every device you sign in on. A backup file is an extra safety copy.</div>
   <button style="width:100%;margin:6px 0" onclick="backup()">Download backup (.json, includes photos)</button>
   <button class="g" style="width:100%;margin:6px 0" onclick="$('restore').click()">Import a backup file</button>
   <button class="g" style="width:100%;margin:6px 0" onclick="csv()">Download list (.csv)</button>
@@ -20663,55 +20560,12 @@ function openMenu(){
   <button class="g" style="width:100%;margin:6px 0" onclick="signOut()">Sign out</button>
   <button class="g" style="width:100%" onclick="closeM()">Close</button>`);
 }
-/* ================= owner-only account and role management ================= */
-async function openUserManager(){
-  if(!IS_OWNER)return;
-  try{
-    const snap=await db.collection('users').get();
-    const users=snap.docs.map(d=>({uid:d.id,...d.data()})).sort((a,b)=>(a.email||'').localeCompare(b.email||''));
-    sheet(`<h2>Manage access</h2><p class="small">Create individual logins only for people you authorise to edit profiles. Everyone else can use the public website link without signing in. Only you can manage accounts or delete/restore profiles.</p>
-      <label>Email address</label><input id="u_email" type="email" placeholder="person@example.com">
-      <label>Access level</label><select id="u_role"><option value="editor">Editor — add and update profiles</option></select>
-      <button style="width:100%;margin:10px 0" onclick="createAccess()">Create login and send setup email</button>
-      <h3>Existing accounts</h3><div id="userRows">${users.length?users.map(u=>`<div class="item" style="cursor:default;margin:6px 0"><div class="t"><div class="n">${esc(u.email||u.uid)}</div><div class="s">${esc(u.role||'No role')}</div></div><select style="width:125px" onchange="changeRole('${u.uid}',this.value)"><option value="editor" ${u.role==='editor'?'selected':''}>Editor</option><option value="revoked" ${u.role==='revoked'?'selected':''}>Revoked</option></select></div>`).join(''):'<p class="small">No additional accounts yet.</p>'}</div>
-      <button class="g" style="width:100%;margin-top:12px" onclick="openMenu()">Back</button>`);
-  }catch(e){toast('Could not load users: '+(e.code||e.message),7000)}
-}
-async function createAccess(){
-  if(!IS_OWNER)return;
-  const email=val('u_email').toLowerCase(),role=val('u_role');
-  if(!email||!email.includes('@')){toast('Enter a valid email address.');return}
-  try{
-    const existing=await db.collection('users').where('email','==',email).get();
-    if(!existing.empty){toast('This email already has an access record.');return}
-    const secondaryName='account-creator';
-    let secondary=firebase.apps.find(a=>a.name===secondaryName);
-    if(!secondary)secondary=firebase.initializeApp(firebaseConfig,secondaryName);
-    const temp=Array.from(crypto.getRandomValues(new Uint8Array(24)),b=>'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*'[b%70]).join('')+'aA9!';
-    const credential=await secondary.auth().createUserWithEmailAndPassword(email,temp);
-    await db.collection('users').doc(credential.user.uid).set({email,role,createdAt:Date.now(),createdBy:U.uid});
-    await secondary.auth().signOut();
-    await auth.sendPasswordResetEmail(email);
-    toast('Account created. A password setup email has been sent.');
-    openUserManager();
-  }catch(e){console.error(e);toast('Could not create account: '+(e.code||e.message),9000)}
-}
-async function changeRole(uid,role){
-  if(!IS_OWNER)return;
-  try{
-    const ref=db.collection('users').doc(uid);
-    await ref.update({role,updatedAt:Date.now()});
-    toast(role==='revoked'?'Access revoked.':'Access level updated.');
-    openUserManager();
-  }catch(e){toast('Could not update access: '+(e.code||e.message),8000);openUserManager()}
-}
-
 function showTrash(){
   const d=RAW.filter(p=>p.deleted);
   sheet(`<h2>Deleted profiles</h2>${d.length?d.map(p=>`<div class="item" style="cursor:default;margin-bottom:8px"><div class="t"><div class="n">${esc(p.name||'Unidentified')}</div><div class="s">${numOf(p)}</div></div><button class="s" onclick="restoreOne('${p.id}')">Restore</button></div>`).join(''):'<p>Nothing deleted.</p>'}
   <button class="g" style="width:100%;margin-top:10px" onclick="openMenu()">Back</button>`);
 }
-function restoreOne(id){if(!IS_OWNER){toast('Only the owner can restore profiles.');return}db.collection('profiles').doc(id).update({deleted:false,updated:Date.now()}).then(()=>syncPublicProfile(id)).then(()=>{toast('Restored and published');setTimeout(showTrash,300)}).catch(e=>toast('Could not restore ('+(e.code||e.message)+')',8000))}
+function restoreOne(id){fire(db.collection('profiles').doc(id).update({deleted:false,updated:Date.now()}));toast('Restored');setTimeout(showTrash,300)}
 async function loadAllPhotos(){
   const snap=await db.collectionGroup('photos').get(),m={};
   snap.docs.forEach(d=>{const pid=d.ref.parent.parent.id;(m[pid]=m[pid]||[]).push({pid:d.id,...d.data()})});
@@ -20719,7 +20573,6 @@ async function loadAllPhotos(){
   return m;
 }
 async function backup(){
-  if(!IS_OWNER){toast('Only the owner can download a full backup.');return}
   try{
     toast('Preparing backup…',6000);
     const m=await loadAllPhotos();
@@ -20729,7 +20582,6 @@ async function backup(){
   }catch(e){toast('Backup failed: '+(e.code||e.message),8000)}
 }
 function csv(){
-  if(!IS_OWNER){toast('Only the owner can export records.');return}
   const rows=[['Number','Title','Name','Surname','Has bio','Photos','Sent by','Notes']].concat(ALL.map(p=>[p.num,p.title,p.name,p.surname,p.bio?'Y':'N',p.photoCount||0,p.sender,p.notes]));
   download(new Blob(['﻿'+rows.map(r=>r.map(c=>'"'+String(c==null?'':c).replace(/"/g,'""')+'"').join(',')).join('\n')],{type:'text/csv'}),'retirees.csv');
 }
@@ -20744,7 +20596,6 @@ function fromNew(r){
   return{id,fields:{...rest,notdup:r.notdup||[]},photos:(photos||[]).map(x=>({data:x.data,pw:x.pw,ph:x.ph,thumb:x.thumb||''}))};
 }
 async function importRecords(recs){
-  if(!IS_OWNER){alert('Only the owner can import records.');return}
   if(!navigator.onLine){alert('Connect to the internet to import.');return}
   let add=0,skip=0,maxSeq=0;
   for(let i=0;i<recs.length;i++){
@@ -20761,7 +20612,7 @@ async function importRecords(recs){
       b.set(ref.collection('photos').doc(),{data:x.data,thumb:x.thumb||'',pw:x.pw,ph:x.ph,order:k,created:Date.now()+k});
     }
     b.set(ref,f);
-    try{await b.commit();await syncPublicProfile(ref.id);add++}catch(e){toast('Import stopped: '+(e.code||e.message),9000);return}
+    try{await b.commit();add++}catch(e){toast('Import stopped: '+(e.code||e.message),9000);return}
   }
   if(maxSeq)try{await bumpCounter(maxSeq)}catch(e){}
   toast('Import finished. Added '+add+', skipped '+skip+' already present.',8000);
@@ -20792,7 +20643,7 @@ async function checkLegacy(){
 }
 function showLegacy(){
   const fresh=legacyList.filter(r=>{const id=r.uid||(r.id!=null?'p'+r.id:null);return !RAW.some(p=>p.legacyUid===id)});
-  $('legacy').innerHTML=fresh.length&&IS_OWNER?`<div class="warn"><b>${fresh.length} profile(s) were found on this device from the old version.</b><br>
+  $('legacy').innerHTML=fresh.length?`<div class="warn"><b>${fresh.length} profile(s) were found on this device from the old version.</b><br>
    <button style="margin-top:8px;width:100%" onclick="importLegacy()">Import them to the cloud</button></div>`:'';
 }
 async function importLegacy(){await importRecords(legacyList.map(fromOld));showLegacy()}
@@ -20820,7 +20671,6 @@ function bioParas(bio){
   });
 }
 async function wordDoc(){
-  if(!IS_OWNER){toast('Only the owner can generate Word exports.');return}
   if(!window.docx){alert('The Word library did not load. Please reload the page and try again.');return}
   const {Document,Packer,Paragraph,TextRun,ImageRun,AlignmentType,Footer,PageNumber,TableOfContents,HeadingLevel}=docx;
   const scope=$('w_scope').value,useToc=$('w_toc').checked,onePer=$('w_one').checked,allPics=$('w_all').checked;
