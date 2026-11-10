@@ -89,8 +89,8 @@ pre{background:#f1efe8;padding:10px;border-radius:8px;overflow:auto;font-size:12
   </header>
   <div id="legacy"></div>
   <div class="stats" id="stats"></div>
-  <div class="bar"><i id="prog"></i></div>
-  <div class="tools"><input id="q" placeholder="Search name or number…" oninput="renderList()"></div>
+  <div class="bar"><i id="prog" style="width:0%"></i></div>
+  <div class="tools"><input id="q" placeholder="Search name, bio or details…" oninput="renderList()"></div>
   <div class="list" id="list"></div>
   <nav id="adminNav" style="display:none">
     <button onclick="openForm()">+ Add</button>
@@ -181,7 +181,6 @@ function resetPw() {
 }
 
 function fetchRetirees() {
-  // Connected to your exact Firestore collection name 'profiles'
   db.collection('profiles').onSnapshot(snapshot => {
     retirees = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     updateStats();
@@ -193,10 +192,15 @@ function fetchRetirees() {
 
 function updateStats() {
   const total = retirees.length;
-  const withPhoto = retirees.filter(r => r.photoUrl || r.bio).length;
+  const complete = retirees.filter(r => (r.name || r.bio) && (r.photoUrl || (r.photos && r.photos.length > 0))).length;
+  const incomplete = total - complete;
+  const pct = total > 0 ? Math.round((complete / total) * 100) : 0;
+
+  $('prog').style.width = pct + '%';
   $('stats').innerHTML = `
     <div class="stat ${currentFilter==='all'?'on':''}" onclick="setFilter('all')"><b>${total}</b><span>Total</span></div>
-    <div class="stat ${currentFilter==='photo'?'on':''}" onclick="setFilter('photo')"><b>${withPhoto}</b><span>Has Details</span></div>
+    <div class="stat ${currentFilter==='complete'?'on':''}" onclick="setFilter('complete')"><b>${complete}</b><span>Complete</span></div>
+    <div class="stat ${currentFilter==='incomplete'?'on':''}" onclick="setFilter('incomplete')"><b>${incomplete}</b><span>Incomplete</span></div>
   `;
 }
 
@@ -214,30 +218,41 @@ function renderList() {
   const filtered = retirees.filter(r => {
     const titleText = (r.name || r.bio || '').toLowerCase();
     const matchesQuery = titleText.includes(query) || (r.number && r.number.toLowerCase().includes(query));
-    const matchesFilter = currentFilter === 'photo' ? !!(r.photoUrl || r.bio) : true;
+    
+    const hasDetails = (r.name || r.bio) && (r.photoUrl || (r.photos && r.photos.length > 0));
+    const matchesFilter = currentFilter === 'complete' ? hasDetails : currentFilter === 'incomplete' ? !hasDetails : true;
+    
     return matchesQuery && matchesFilter;
   });
 
   if (filtered.length === 0) {
-    listEl.innerHTML = '<div class="empty">No retiree profiles found.</div>';
+    listEl.innerHTML = '<div class="empty">No profiles found matching criteria.</div>';
     return;
   }
 
   filtered.forEach(item => {
     const el = document.createElement('div');
     el.className = 'item';
-    const imgHtml = item.photoUrl 
-      ? `<img class="ph" src="${item.photoUrl}" alt="Profile">` 
-      : `<div class="ph">Photo</div>`;
     
-    // Support fields from your existing documents (like 'bio' or 'name')
+    // Extract thumbnail image supporting both photoUrl and nested photos array
+    let thumb = item.photoUrl;
+    if (!thumb && item.photos && item.photos.length > 0) {
+      thumb = typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url;
+    }
+
+    const imgHtml = thumb 
+      ? `<img class="ph" src="${thumb}" alt="Profile Photo">` 
+      : `<div class="ph">No Photo</div>`;
+    
     const displayName = item.name || (item.bio ? item.bio.slice(0, 45) + '...' : 'Unnamed Profile');
-    
+    const hasBio = item.bio || item.notes ? '<span class="tag y">Bio</span>' : '<span class="tag n0">No Bio</span>';
+    const hasPhoto = thumb ? '<span class="tag y">Pix</span>' : '<span class="tag n0">No Pix</span>';
+
     el.innerHTML = `
       ${imgHtml}
       <div class="t">
         <div class="n">${displayName}</div>
-        <div class="s">${item.number || item.created ? 'ID / Record' : 'No ID'}</div>
+        <div class="s">${item.number || 'Record ID'} &bull; ${hasBio} ${hasPhoto}</div>
       </div>
     `;
     el.onclick = () => openView(item);
@@ -271,11 +286,16 @@ function compressImage(file, callback) {
 function openView(item) {
   const modal = $('m');
   const sheet = $('sheet');
+  let thumb = item.photoUrl;
+  if (!thumb && item.photos && item.photos.length > 0) {
+    thumb = typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url;
+  }
+
   sheet.innerHTML = `
     <h2>${item.name || 'Profile Details'}</h2>
     <p><strong>ID Number:</strong> ${item.number || 'N/A'}</p>
-    ${item.photoUrl ? `<img src="${item.photoUrl}" style="max-width:100%;border-radius:8px;margin-bottom:12px;">` : ''}
-    <p><strong>Notes / Bio:</strong> ${item.notes || item.bio || 'No extra notes.'}</p>
+    ${thumb ? `<img src="${thumb}" style="max-width:100%;border-radius:8px;margin-bottom:12px;">` : ''}
+    <p><strong>Bio / Notes:</strong> ${item.bio || item.notes || 'No extra notes.'}</p>
     <div style="display:flex;gap:8px;margin-top:16px;">
       ${currentUser ? `<button onclick="openForm('${item.id}')">Edit</button><button class="d" onclick="deleteProfile('${item.id}')">Delete</button>` : ''}
       <button class="g" onclick="closeModal()">Close</button>
@@ -288,6 +308,8 @@ function openForm(id = null) {
   const item = id ? retirees.find(r => r.id === id) : {};
   const modal = $('m');
   const sheet = $('sheet');
+  let thumb = item.photoUrl || (item.photos && item.photos[0] ? (typeof item.photos[0] === 'string' ? item.photos[0] : item.photos[0].url) : '');
+
   sheet.innerHTML = `
     <h2>${id ? 'Edit' : 'Add'} Profile</h2>
     <form onsubmit="event.preventDefault();saveProfile('${id || ''}')">
@@ -298,11 +320,11 @@ function openForm(id = null) {
       <label>Photo</label>
       <div id="pz" onclick="$('f_photo').click()">
         <span class="upload-icon">📷</span>
-        <span>${item.photoUrl ? 'Click to replace photo' : 'Click to select photo'}</span>
+        <span>${thumb ? 'Click to replace photo' : 'Click to select photo'}</span>
       </div>
       <input type="file" id="f_photo" accept="image/*" onchange="previewPhoto(this)">
-      <label>Notes</label>
-      <textarea id="f_notes">${item.notes || item.bio || ''}</textarea>
+      <label>Bio / Notes</label>
+      <textarea id="f_notes">${item.bio || item.notes || ''}</textarea>
       <div style="display:flex;gap:8px;margin-top:16px;">
         <button type="submit">Save Profile</button>
         <button type="button" class="g" onclick="closeModal()">Cancel</button>
@@ -327,7 +349,7 @@ function saveProfile(id) {
   const payload = {
     name: $('f_name').value,
     number: $('f_num').value,
-    notes: $('f_notes').value
+    bio: $('f_notes').value
   };
   if (tempPhotoUrl) payload.photoUrl = tempPhotoUrl;
 
@@ -344,7 +366,7 @@ function saveProfile(id) {
 
 function deleteProfile(id) {
   if (!currentUser) return alert("Admin login required.");
-  if (confirm("Are you sure you want to delete this retiree profile?")) {
+  if (confirm("Are you sure you want to delete this profile?")) {
     db.collection('profiles').doc(id).delete().then(() => {
       closeModal();
       toast("Profile deleted.");
